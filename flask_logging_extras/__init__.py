@@ -53,7 +53,11 @@ def register_logger_class(cls=FlaskExtraLogger):
     """
     Register a new logger class
 
-    It is effectively a wrapper around logging.setLoggerClass().
+    It is effectively a wrapper around logging.setLoggerClass(), with an
+    added check to make sure the class can be used as a logger.
+
+    To use the extra features of the logger class in a Flask app, you must
+    call it before the app is instantiated.
     """
 
     if not issubclass(cls, logging.Logger):
