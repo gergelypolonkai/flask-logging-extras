@@ -3,3 +3,6 @@
 __pycache__/
 *.pyc
 /Flask_Logging_Extras.egg-info/
+/.tox/
+.coverage
+/htmlcov/
