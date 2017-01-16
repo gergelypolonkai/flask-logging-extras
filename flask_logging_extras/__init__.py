@@ -1,8 +1,14 @@
+# -*- coding: utf-8 -*-
 """
 Extra functionality for Flask logging
 
 Flask-Logging-Extras is a Flask extension that plugs into the logging
 mechanism of Flask applications.
+
+Flask-Logging-Extras requires you to set FLASK_LOGGING_EXTRAS_KEYWORDS to a
+dictionary value, where the dictionary key is a the key you can use in the
+log message format, and the value is a default value that is substituted if
+no value is present in the message record.
 """
 
 import logging
@@ -29,7 +35,7 @@ class FlaskExtraLogger(logging.getLoggerClass()):
        register_logger_class(cls=FlaskExtraLogger)
 
        app = Flask(__name__)
-       app.config['FLASK_LOGGING_EXTRAS_KEYWORDS'] = ['category']
+       app.config['FLASK_LOGGING_EXTRAS_KEYWORDS'] = {'category': '<unset>'}
        app.logger.init_app()
 
        formatter = logging.Formatter(
@@ -47,11 +53,18 @@ class FlaskExtraLogger(logging.getLoggerClass()):
     """
 
     def __init__(self, *args, **kwargs):
-        if 'app' in kwargs and kwargs['app'] is not None:
-            raise TypeError(
-                "Cannot initialise {classname} with an app.  "
-                "See the documentation of Flask-Logging-Extras for more info."
-                .format(classname=self.__class__.__name__))
+        if 'app' in kwargs:
+            if kwargs['app'] is not None:
+                raise TypeError(
+                    "Cannot initialise {classname} with an app.  See the"
+                    "documentation of Flask-Logging-Extras for more info."
+                    .format(classname=self.__class__.__name__))
+            else:
+                # If app is None, treat it as if it wasn’t there
+                del(kwargs['app'])
+
+        self.app = None
+        self._valid_keywords = []
 
         super(FlaskExtraLogger, self).__init__(*args, **kwargs)
 
@@ -62,6 +75,9 @@ class FlaskExtraLogger(logging.getLoggerClass()):
         for kw in self._valid_keywords:
             if kw in kwargs:
                 kwargs['extra'][kw] = kwargs[kw]
+                del(kwargs[kw])
+            else:
+                kwargs['extra'][kw] = self._valid_keywords[kw]
 
         super(FlaskExtraLogger, self)._log(*args, **kwargs)
 
@@ -82,13 +98,15 @@ class FlaskExtraLogger(logging.getLoggerClass()):
                              reserved for internal use
         """
 
-        app.config.setdefault('FLASK_LOGGING_EXTRAS_KEYWORDS', [])
+        app.config.setdefault('FLASK_LOGGING_EXTRAS_KEYWORDS', {})
 
         for kw in app.config['FLASK_LOGGING_EXTRAS_KEYWORDS']:
             if kw in ['exc_info', 'extra', 'stack_info']:
                 raise ValueError(
                     '"{keyword}" member of FLASK_LOGGING_EXTRAS_KEYWORDS is '
                     'reserved for internal use.')
+
+        self._valid_keywords = app.config['FLASK_LOGGING_EXTRAS_KEYWORDS']
 
 
 def register_logger_class(cls=FlaskExtraLogger):
@@ -118,7 +136,7 @@ def register_logger_class(cls=FlaskExtraLogger):
         raise TypeError(
             "The logger class must be a subclass of logging.Logger!")
 
-    old_class = logging.get_logger_class()
+    old_class = logging.getLoggerClass()
     logging.setLoggerClass(cls)
 
     return old_class
