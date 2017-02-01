@@ -82,4 +82,4 @@ Then in the `docs/` directory, run
 License
 -------
 
-This module is available under the BSD license.
+This module is available under the MIT license.
