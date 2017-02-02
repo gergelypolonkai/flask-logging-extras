@@ -32,6 +32,8 @@ no value is present in the message record.
 
 import logging
 
+from flask import has_request_context, request
+
 __version_info__ = ('0', '0', '1')
 __version__ = '.'.join(__version_info__)
 __author__ = 'Gergely Polonkai'
@@ -40,7 +42,8 @@ __copyright__ = '(c) 2015 GT2'
 
 class FlaskExtraLogger(logging.getLoggerClass()):
     """
-    A logger class that is capable of adding extra keywords to log formatters
+    A logger class that is capable of adding extra keywords to log
+    formatters and logging the blueprint name
 
     Usage:
 
@@ -55,7 +58,13 @@ class FlaskExtraLogger(logging.getLoggerClass()):
 
        app = Flask(__name__)
        app.config['FLASK_LOGGING_EXTRAS_KEYWORDS'] = {'category': '<unset>'}
+       app.config['FLASK_LOGGING_EXTRAS_BLUEPRINT'] = ('blueprint',
+                                                       '<APP>',
+                                                       '<NOT REQUEST>')
        app.logger.init_app()
+
+       bp = Blueprint('my_blueprint', __name__)
+       app.register_blueprint(bp)
 
        formatter = logging.Formatter(
            '[%(asctime)s] [%(levelname)s] [%(category)s] %(message)s')
@@ -68,8 +77,37 @@ class FlaskExtraLogger(logging.getLoggerClass()):
        app.logger.info('The message', category='my category')
 
        # This will produce something like this in app.log:
-       # [TIMESTAMP2017-01-16 08:44:48.944] [INFO] [my category] The message
+       # [2017-01-16 08:44:48.944] [INFO] [my category] The message
+
+       formatter = logging.Formatter('[%(blueprint)s] %(message)s')
+       handler = logging.FileHandler('other.log', mode='a')
+       handler.setFormatter(formatter)
+       handler.setLevel(logging.INFO)
+
+       app.logger.addHandler(handler)
+
+       @app.route('/1/')
+       def route_1():
+           # This will produce this log message:
+           # [<APP>] Message
+           current_app.logger.info('Message')
+
+           return ''
+
+       @bp.route('/2')
+       def route_2():
+           # This will produce this log message:
+           # [my blueprint] Message
+           current_app.logger.info('Message')
+
+           return ''
+
+       # This will produce this log message:
+       [<NOT REQUEST>] Message
+       app.logger.info('Message')
     """
+
+    _RESERVED_KEYWORDS = ('exc_info', 'extra', 'stack_info')
 
     def __init__(self, *args, **kwargs):
         if 'app' in kwargs:
@@ -84,12 +122,22 @@ class FlaskExtraLogger(logging.getLoggerClass()):
 
         self.app = None
         self._valid_keywords = []
+        self._blueprint_var = None
+        self._blueprint_app = None
+        self._blueprint_norequest = None
 
         super(FlaskExtraLogger, self).__init__(*args, **kwargs)
 
     def _log(self, *args, **kwargs):
         if 'extra' not in kwargs:
             kwargs['extra'] = {}
+
+        # If we were asked to log the blueprint name, add it to the extra list
+        if self._blueprint_var is not None:
+            if has_request_context():
+                kwargs['extra'][self._blueprint_var] = request.blueprint or self._blueprint_app
+            else:
+                kwargs['extra'][self._blueprint_var] = self._blueprint_norequest
 
         for kw in self._valid_keywords:
             if kw in kwargs:
@@ -99,6 +147,13 @@ class FlaskExtraLogger(logging.getLoggerClass()):
                 kwargs['extra'][kw] = self._valid_keywords[kw]
 
         super(FlaskExtraLogger, self)._log(*args, **kwargs)
+
+    def _check_reserved_word(self, word):
+        if word in self._RESERVED_KEYWORDS:
+            raise ValueError(
+                '"{keyword}" cannot be used as an extra keyword, as it is '
+                'reserved for internal use.'
+                .format(keyword=word))
 
     def init_app(self, app):
         """
@@ -118,14 +173,21 @@ class FlaskExtraLogger(logging.getLoggerClass()):
         """
 
         app.config.setdefault('FLASK_LOGGING_EXTRAS_KEYWORDS', {})
+        app.config.setdefault('FLASK_LOGGING_EXTRAS_BLUEPRINT',
+                              (None, '<app>', '<not a request>'))
 
         for kw in app.config['FLASK_LOGGING_EXTRAS_KEYWORDS']:
-            if kw in ['exc_info', 'extra', 'stack_info']:
-                raise ValueError(
-                    '"{keyword}" member of FLASK_LOGGING_EXTRAS_KEYWORDS is '
-                    'reserved for internal use.')
+            self._check_reserved_word(kw)
+
+        self._check_reserved_word(
+            app.config['FLASK_LOGGING_EXTRAS_BLUEPRINT'][0])
 
         self._valid_keywords = app.config['FLASK_LOGGING_EXTRAS_KEYWORDS']
+        (
+            self._blueprint_var,
+            self._blueprint_app,
+            self._blueprint_norequest,
+        ) = app.config['FLASK_LOGGING_EXTRAS_BLUEPRINT']
 
 
 def register_logger_class(cls=FlaskExtraLogger):

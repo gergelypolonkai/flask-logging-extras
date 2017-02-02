@@ -7,7 +7,7 @@ import logging
 import sys
 from unittest import TestCase
 
-from flask import Flask
+from flask import Flask, Blueprint, current_app
 
 import flask_logging_extras
 
@@ -173,3 +173,59 @@ class LoggerKeywordsTestCase(TestCase):
         # string "<unset>" will be assigned.
         app.logger.info('message')
         self.assertEqual('message [<unset>]\n', log_stream.lines[-1])
+
+
+class LoggerBlueprintTestCase(TestCase):
+    def setUp(self):
+        # Register our logger class
+        self.original_logger_class = logging.getLoggerClass()
+        flask_logging_extras.register_logger_class()
+
+        app = Flask('test_app')
+        self.app = app
+        app.config['FLASK_LOGGING_EXTRAS_BLUEPRINT'] = (
+            'bp', '<app>', '<norequest>')
+        app.logger.init_app(app)
+
+        fmt = '%(bp)s %(message)s'
+        self.stream = ListStream()
+
+        formatter = logging.Formatter(fmt)
+        handler = TestingStreamHandler(stream=self.stream)
+        handler.setLevel(logging.DEBUG)
+        handler.setFormatter(formatter)
+        app.logger.addHandler(handler)
+        app.logger.setLevel(logging.DEBUG)
+
+        bp = Blueprint('test_blueprint', 'test_bpg13')
+
+        @app.route('/app')
+        def route_1():
+            current_app.logger.info('Message')
+
+            return ''
+
+        @bp.route('/blueprint')
+        def route_2():
+            current_app.logger.info('Message')
+
+            return ''
+
+        app.register_blueprint(bp)
+
+        self.client = app.test_client()
+
+    def tearDown(self):
+        logging.setLoggerClass(self.original_logger_class)
+
+    def test_request_log(self):
+        self.client.get('/app')
+        self.assertEqual('<app> Message\n', self.stream.lines[-1])
+
+        page = self.client.get('/blueprint')
+        self.assertEqual('test_blueprint Message\n', self.stream.lines[-1])
+
+        with self.app.app_context():
+            current_app.logger.info('Message')
+
+        self.assertEqual('<norequest> Message\n', self.stream.lines[-1])

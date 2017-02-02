@@ -15,8 +15,16 @@ Flask-Logging-Extras
 
 Flask-Logging-Extras adds additional logging features for Flask applications.
 
-The only feature implemented now is adding extra arguments to the format
-string, like this (this example adds the category keyword to the logs:
+Extra keywords in the log formatters
+------------------------------------
+
+Adding extra keywords to the log format message is a bit tedious, as these
+must be supplied to the logging methods in the `extra` argument as a
+dictionary.
+
+Flask-Logging-Extras makes this easier, so you can add such keywords to the
+logging methods directly. The example adds the category keyword to the logs,
+and shows how to do it with and without Flask-Logging-Extras:
 
 .. code-block:: python
 
@@ -26,8 +34,55 @@ string, like this (this example adds the category keyword to the logs:
    app.config['FLASK_LOGGING_EXTRAS_KEYWORDS'] = {'category': '<unset>'}
    app.logger.init_app(app)
 
+   # Without Flask-Logging-Extras
+   current_app.logger.info('this is a the message, as usual',
+                           extra={'category': 'fancy-category'})
+   # With Flask-Logging-Extras
    current_app.logger.info('this is the message, as usual',
                            category='fancy-category')
+
+Logging the blueprint name
+--------------------------
+
+Although you can always access the blueprint name using `request.blueprint`,
+adding it to the logs as a new keyword is not so easy.
+
+With Flask-Logging-Extras you can specify a keyword that will hold the
+blueprint name in the logs, and specify what value to put there if the log
+doesn’t originate in a request, or it is not from a blueprint route, but
+from an app route.
+
+.. code-block:: python
+
+   fmt = '[%(blueprint)s] %(message)s'
+   # Initialize log handlers as usual, like creating a FileHandler, and
+   # assign fmt to it as a format string
+   app.config['FLASK_LOGGING_EXTRAS_BLUEPRINT'] = (
+       'blueprint',
+       '<APP>',
+       '<NO REQUEST>',
+   )
+
+   bp = Blueprint('bpname', __name__)
+   app.register_blueprint(bp)
+
+   @app.route('/route/1/')
+   def route_1():
+       # This will produce the log message: "[<APP>] Message"
+       current_app.logger.info('Message')
+
+       return 'response 1'
+
+   @bp.route('/route/2/')
+   def route_2():
+       # This will produce the log message: "[bpname] Message"
+       current_app.logger.info('Message')
+
+       return 'response 2'
+
+   def random_function_outside_of_a_request():
+       # This will produce the log message: "[<NO REQUEST>] Message"
+       current_app.logger.info('Message')
 
 Installation
 ------------
