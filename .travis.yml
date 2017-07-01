@@ -9,7 +9,7 @@ env:
     - TOXENV=py35
 install:
     - pip install -U pip
-    - pip install -U Flask tox coverage codecov
+    - pip install -U Flask tox coverage codecov celery
 script:
     - tox
 after_success:
