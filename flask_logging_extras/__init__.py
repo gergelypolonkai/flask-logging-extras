@@ -32,6 +32,11 @@ no value is present in the message record.
 
 import logging
 
+try:
+    from celery import current_task:
+except ImportError:
+    current_task = None
+
 from flask import has_request_context, request
 
 __version_info__ = ('0', '0', '1')
@@ -134,7 +139,9 @@ class FlaskExtraLogger(logging.getLoggerClass()):
 
         # If we were asked to log the blueprint name, add it to the extra list
         if self._blueprint_var is not None:
-            if has_request_context():
+            if current_task:
+                kwargs['extra'][self._blueprint_var] = current_task.name
+            elif has_request_context():
                 kwargs['extra'][self._blueprint_var] = request.blueprint or self._blueprint_app
             else:
                 kwargs['extra'][self._blueprint_var] = self._blueprint_norequest
