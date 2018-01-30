@@ -32,7 +32,7 @@ no value is present in the message record.
 
 import logging
 
-from flask import has_request_context, request
+from flask import has_request_context, request, current_app, has_app_context
 
 __version_info__ = ('0', '0', '1')
 __version__ = '.'.join(__version_info__)
@@ -129,6 +129,9 @@ class FlaskExtraLogger(logging.getLoggerClass()):
         super(FlaskExtraLogger, self).__init__(*args, **kwargs)
 
     def _log(self, *args, **kwargs):
+        if has_app_context() and self.app is None:
+            self.init_app(current_app)
+
         if 'extra' not in kwargs:
             kwargs['extra'] = {}
 
@@ -171,6 +174,8 @@ class FlaskExtraLogger(logging.getLoggerClass()):
         :raises ValueError: if the app tries to register a keyword that is
                              reserved for internal use
         """
+
+        self.app = app
 
         app.config.setdefault('FLASK_LOGGING_EXTRAS_KEYWORDS', {})
         app.config.setdefault('FLASK_LOGGING_EXTRAS_BLUEPRINT',
