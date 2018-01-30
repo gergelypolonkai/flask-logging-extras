@@ -191,10 +191,10 @@ class LoggerBlueprintTestCase(TestCase):
         self.stream = ListStream()
 
         formatter = logging.Formatter(fmt)
-        handler = TestingStreamHandler(stream=self.stream)
-        handler.setLevel(logging.DEBUG)
-        handler.setFormatter(formatter)
-        app.logger.addHandler(handler)
+        self.handler = TestingStreamHandler(stream=self.stream)
+        self.handler.setLevel(logging.DEBUG)
+        self.handler.setFormatter(formatter)
+        app.logger.addHandler(self.handler)
         app.logger.setLevel(logging.DEBUG)
 
         bp = Blueprint('test_blueprint', 'test_bpg13')
@@ -217,6 +217,15 @@ class LoggerBlueprintTestCase(TestCase):
 
     def tearDown(self):
         logging.setLoggerClass(self.original_logger_class)
+
+    def test_autoconfig(self):
+        logger = logging.getLogger('test')
+        logger.addHandler(self.handler)
+
+        with self.app.app_context():
+            logger.warning('Hello')
+
+        self.assertEqual('<norequest> Hello\n', self.stream.lines[-1])
 
     def test_request_log(self):
         self.client.get('/app')

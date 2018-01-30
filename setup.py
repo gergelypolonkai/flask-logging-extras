@@ -8,7 +8,7 @@ Flask-Logging-Extras provides extra logging functionality for Flask apps.
 from setuptools import setup
 
 setup(name='Flask-Logging-Extras',
-      version='0.1.0',
+      version='0.1.1',
       url='https://github.com/gergelypolonkai/flask-logging-extras',
       license='MIT',
       author='Gergely Polonkai',
