@@ -121,7 +121,7 @@ class FlaskExtraLogger(logging.getLoggerClass()):
                 del(kwargs['app'])
 
         self.app = None
-        self._valid_keywords = []
+        self._valid_keywords = {}
         self._blueprint_var = None
         self._blueprint_app = None
         self._blueprint_norequest = None
