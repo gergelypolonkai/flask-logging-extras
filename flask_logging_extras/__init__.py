@@ -128,6 +128,10 @@ class FlaskExtraLogger(logging.getLoggerClass()):
 
         super(FlaskExtraLogger, self).__init__(*args, **kwargs)
 
+        if hasattr(self.__class__, '__default_config__'):
+            self.config = self.__class__.__default_config__
+            self.init_from_config()
+
     def _log(self, *args, **kwargs):
         if has_app_context() and self.app is None:
             self.init_app(current_app)
@@ -158,6 +162,42 @@ class FlaskExtraLogger(logging.getLoggerClass()):
                 'reserved for internal use.'
                 .format(keyword=word))
 
+    def init_from_config(self):
+        """Intialize the logger class from a Flask config dict
+
+        The class reads its necessary configuration from the config provided.
+
+        If the application doesn’t call this, or doesn’t have the `FLASK_LOGGING_EXTRAS_KEYWORDS`
+        in its config, no extra functionality will be added.
+
+        :raises ValueError: if the app tries to register a keyword that is
+                             reserved for internal use
+
+        """
+
+        if not isinstance(self.config, dict):
+            self.config = {
+                'FLASK_LOGGING_EXTRAS_KEYWORDS': getattr(self.config, 'FLASK_LOGGING_EXTRAS_KEYWORDS', {}),
+                'FLASK_LOGGING_EXTRAS_BLUEPRINT': getattr(self.config, 'FLASK_LOGGING_EXTRAS_BLUEPRINT', (None, '<app>', '<not a request>',)),
+            }
+
+        self.config.setdefault('FLASK_LOGGING_EXTRAS_KEYWORDS', {})
+        self.config.setdefault('FLASK_LOGGING_EXTRAS_BLUEPRINT',
+                               (None, '<app>', '<not a request>'))
+
+        for kw in self.config['FLASK_LOGGING_EXTRAS_KEYWORDS']:
+            self._check_reserved_word(kw)
+
+        self._check_reserved_word(
+            self.config['FLASK_LOGGING_EXTRAS_BLUEPRINT'][0])
+
+        self._valid_keywords = self.config['FLASK_LOGGING_EXTRAS_KEYWORDS']
+        (
+            self._blueprint_var,
+            self._blueprint_app,
+            self._blueprint_norequest,
+        ) = self.config['FLASK_LOGGING_EXTRAS_BLUEPRINT']
+
     def init_app(self, app):
         """
         Intialize the logger class with a Flask application
@@ -176,26 +216,11 @@ class FlaskExtraLogger(logging.getLoggerClass()):
         """
 
         self.app = app
-
-        app.config.setdefault('FLASK_LOGGING_EXTRAS_KEYWORDS', {})
-        app.config.setdefault('FLASK_LOGGING_EXTRAS_BLUEPRINT',
-                              (None, '<app>', '<not a request>'))
-
-        for kw in app.config['FLASK_LOGGING_EXTRAS_KEYWORDS']:
-            self._check_reserved_word(kw)
-
-        self._check_reserved_word(
-            app.config['FLASK_LOGGING_EXTRAS_BLUEPRINT'][0])
-
-        self._valid_keywords = app.config['FLASK_LOGGING_EXTRAS_KEYWORDS']
-        (
-            self._blueprint_var,
-            self._blueprint_app,
-            self._blueprint_norequest,
-        ) = app.config['FLASK_LOGGING_EXTRAS_BLUEPRINT']
+        self.config = app.config
+        self.init_from_config()
 
 
-def register_logger_class(cls=FlaskExtraLogger):
+def register_logger_class(cls=FlaskExtraLogger, config=None):
     """
     Register a new logger class
 
@@ -224,5 +249,6 @@ def register_logger_class(cls=FlaskExtraLogger):
 
     old_class = logging.getLoggerClass()
     logging.setLoggerClass(cls)
+    cls.__default_config__ = config
 
     return old_class
