@@ -34,15 +34,15 @@ import logging
 
 from flask import has_request_context, request, current_app, has_app_context
 
-__version_info__ = ('0', '0', '1')
+__version_info__ = ('1', '0', '0')
 __version__ = '.'.join(__version_info__)
 __author__ = 'Gergely Polonkai'
 __license__ = 'MIT'
-__copyright__ = '(c) 2015 GT2'
+__copyright__ = '(c) 2015-2018 Benchmarked.games'
 
-class FlaskExtraLogger(logging.getLoggerClass()):
-    """
-    A logger class that is capable of adding extra keywords to log
+
+class FlaskExtraLoggerFormatter(logging.Formatter):
+    """A log formatter class that is capable of adding extra keywords to log
     formatters and logging the blueprint name
 
     Usage:
@@ -50,205 +50,92 @@ class FlaskExtraLogger(logging.getLoggerClass()):
     .. code-block:: python
 
        import logging
+       from logging.config import dictConfig
 
-       from flask_logging_extras import register_logger_class
-
-       # This must be done before the app is initialized!
-       register_logger_class(cls=FlaskExtraLogger)
+       dictConfig({
+           'formatters': {
+               'extras': {
+                   'format': '[%(asctime)s] [%(levelname)s] [%(category)s] [%(blueprint)s] %(message)s',
+               },
+           },
+           'handlers': {
+               'extras_handler': {
+                   'class': 'logging.FileHandler',
+                   'args': ('app.log', 'a'),
+                   'formatter': 'extras',
+                   'level': 'INFO',
+               },
+           },
+           'loggers': {
+               'my_app': {
+                   'handlers': ['extras_handler'],
+               }
+           },
+       })
 
        app = Flask(__name__)
        app.config['FLASK_LOGGING_EXTRAS_KEYWORDS'] = {'category': '<unset>'}
        app.config['FLASK_LOGGING_EXTRAS_BLUEPRINT'] = ('blueprint',
                                                        '<APP>',
                                                        '<NOT REQUEST>')
-       app.logger.init_app()
 
        bp = Blueprint('my_blueprint', __name__)
        app.register_blueprint(bp)
 
-       formatter = logging.Formatter(
-           '[%(asctime)s] [%(levelname)s] [%(category)s] %(message)s')
-       handler = logging.FileHandler('app.log', mode='a')
-       handler.setFormatter(formatter)
-       handler.setLevel(logging.INFO)
-
-       app.logger.addHandler(handler)
-
-       app.logger.info('The message', category='my category')
+       logger = logging.getLogger('my_app')
 
        # This will produce something like this in app.log:
-       # [2017-01-16 08:44:48.944] [INFO] [my category] The message
+       # [2018-05-02 12:44:48.944] [INFO] [my category] [<NOT REQUEST>] The message
+       logger.info('The message', extra=dict(category='my category'))
 
-       formatter = logging.Formatter('[%(blueprint)s] %(message)s')
-       handler = logging.FileHandler('other.log', mode='a')
-       handler.setFormatter(formatter)
-       handler.setLevel(logging.INFO)
-
-       app.logger.addHandler(handler)
-
-       @app.route('/1/')
+       @app.route('/1')
        def route_1():
-           # This will produce this log message:
-           # [<APP>] Message
-           current_app.logger.info('Message')
+           # This will produce a log message like this:
+           # [2018-05-02 12:44:48.944] [INFO] [<unset>] [<APP>] Message
+           logger.info('Message')
 
            return ''
 
        @bp.route('/2')
        def route_2():
-           # This will produce this log message:
-           # [my blueprint] Message
-           current_app.logger.info('Message')
+           # This will produce a log message like this:
+           # [2018-05-02 12:44:48.944] [INFO] [<unset>] [my_blueprint] Message
+           logger.info('Message')
 
            return ''
 
-       # This will produce this log message:
-       [<NOT REQUEST>] Message
-       app.logger.info('Message')
+       # This will produce a log message like this:
+       # [2018-05-02 12:44:48.944] [INFO] [<unset>] [<NOT REQUEST>] Message
+       logger.info('Message')
     """
 
-    _RESERVED_KEYWORDS = ('exc_info', 'extra', 'stack_info')
-
-    def __init__(self, *args, **kwargs):
-        if 'app' in kwargs:
-            if kwargs['app'] is not None:
-                raise TypeError(
-                    "Cannot initialise {classname} with an app.  See the"
-                    "documentation of Flask-Logging-Extras for more info."
-                    .format(classname=self.__class__.__name__))
-            else:
-                # If app is None, treat it as if it wasn’t there
-                del(kwargs['app'])
-
-        self.app = None
-        self._valid_keywords = {}
-        self._blueprint_var = None
-        self._blueprint_app = None
-        self._blueprint_norequest = None
-
-        super(FlaskExtraLogger, self).__init__(*args, **kwargs)
-
-        if hasattr(self.__class__, '__default_config__'):
-            self.config = self.__class__.__default_config__
-            self.init_from_config()
-
-    def _log(self, *args, **kwargs):
-        if has_app_context() and self.app is None:
-            self.init_app(current_app)
-
-        if 'extra' not in kwargs:
-            kwargs['extra'] = {}
-
-        # If we were asked to log the blueprint name, add it to the extra list
-        if self._blueprint_var is not None:
-            if has_request_context():
-                kwargs['extra'][self._blueprint_var] = request.blueprint or self._blueprint_app
-            else:
-                kwargs['extra'][self._blueprint_var] = self._blueprint_norequest
-
-        for kw in self._valid_keywords:
-            if kw in kwargs:
-                kwargs['extra'][kw] = kwargs[kw]
-                del(kwargs[kw])
-            else:
-                kwargs['extra'][kw] = self._valid_keywords[kw]
-
-        super(FlaskExtraLogger, self)._log(*args, **kwargs)
-
-    def _check_reserved_word(self, word):
-        if word in self._RESERVED_KEYWORDS:
-            raise ValueError(
-                '"{keyword}" cannot be used as an extra keyword, as it is '
-                'reserved for internal use.'
-                .format(keyword=word))
-
-    def init_from_config(self):
-        """Intialize the logger class from a Flask config dict
-
-        The class reads its necessary configuration from the config provided.
-
-        If the application doesn’t call this, or doesn’t have the `FLASK_LOGGING_EXTRAS_KEYWORDS`
-        in its config, no extra functionality will be added.
-
-        :raises ValueError: if the app tries to register a keyword that is
-                             reserved for internal use
-
+    def _collect_keywords(self, record):
+        """Collect all valid keywords and add them to the log record if not present
         """
 
-        if not isinstance(self.config, dict):
-            self.config = {
-                'FLASK_LOGGING_EXTRAS_KEYWORDS': getattr(self.config, 'FLASK_LOGGING_EXTRAS_KEYWORDS', {}),
-                'FLASK_LOGGING_EXTRAS_BLUEPRINT': getattr(self.config, 'FLASK_LOGGING_EXTRAS_BLUEPRINT', (None, '<app>', '<not a request>',)),
-            }
+        # We assume we do have an active app context here
+        defaults = current_app.config.get('FLASK_LOGGING_EXTRAS_KEYWORDS', {})
 
-        self.config.setdefault('FLASK_LOGGING_EXTRAS_KEYWORDS', {})
-        self.config.setdefault('FLASK_LOGGING_EXTRAS_BLUEPRINT',
-                               (None, '<app>', '<not a request>'))
+        for keyword, default in defaults.items():
+            if keyword not in record.__dict__:
+                setattr(record, keyword, default)
 
-        for kw in self.config['FLASK_LOGGING_EXTRAS_KEYWORDS']:
-            self._check_reserved_word(kw)
+    def format(self, record):
+        bp_var, bp_app, bp_noreq = ('blueprint', '<app>', '<not a request>')
+        blueprint = None
 
-        self._check_reserved_word(
-            self.config['FLASK_LOGGING_EXTRAS_BLUEPRINT'][0])
+        if has_app_context():
+            self._collect_keywords(record)
 
-        self._valid_keywords = self.config['FLASK_LOGGING_EXTRAS_KEYWORDS']
-        (
-            self._blueprint_var,
-            self._blueprint_app,
-            self._blueprint_norequest,
-        ) = self.config['FLASK_LOGGING_EXTRAS_BLUEPRINT']
+            bp_var, bp_app, bp_noreq = current_app.config.get('FLASK_LOGGING_EXTRAS_BLUEPRINT',
+                                                              (bp_var, bp_app, bp_noreq))
 
-    def init_app(self, app):
-        """
-        Intialize the logger class with a Flask application
+            if bp_var and has_request_context():
+                blueprint = request.blueprint or bp_app
 
-        The class reads its necessary configuration from the config of this
-        application.
+        if bp_var and bp_var not in record.__dict__:
+            blueprint = blueprint or bp_noreq
 
-        If the application doesn’t call this, or doesn’t have the
-        `FLASK_LOGGING_EXTRAS_KEYWORDS` in its config, no extra
-        functionality will be added.
+            setattr(record, bp_var, blueprint)
 
-        :param app: a Flask application
-        :type app: Flask
-        :raises ValueError: if the app tries to register a keyword that is
-                             reserved for internal use
-        """
-
-        self.app = app
-        self.config = app.config
-        self.init_from_config()
-
-
-def register_logger_class(cls=FlaskExtraLogger, config=None):
-    """
-    Register a new logger class
-
-    It is effectively a wrapper around `logging.setLoggerClass()`, with an
-    added check to make sure the class can be used as a logger.
-
-    To use the extra features of the logger class in a Flask app, you must
-    call it before the app is instantiated.
-
-    This function returns the logger class that was the default before
-    calling.  This might be useful if you only want to use `cls` in the
-    Flask app object, but not anywhere else in your code.  In this case,
-    simply call `register_logger_class()` again with the return value from
-    the first invocation.
-
-    :param cls: a logger class to register as the default one
-    :type cls: class(logging.Logger)
-    :returns: the old default logger class
-    :rtype: class
-    :raises TypeError: if the class is not a subclass of `logging.Logger`
-    """
-
-    if not issubclass(cls, logging.Logger):
-        raise TypeError(
-            "The logger class must be a subclass of logging.Logger!")
-
-    old_class = logging.getLoggerClass()
-    logging.setLoggerClass(cls)
-    cls.__default_config__ = config
-
-    return old_class
+        return super(FlaskExtraLoggerFormatter, self).format(record)
