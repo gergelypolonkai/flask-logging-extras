@@ -30,15 +30,36 @@ log message format, and the value is a default value that is substituted if
 no value is present in the message record.
 """
 
+from importlib import import_module
 import logging
 
 from flask import has_request_context, request, current_app, has_app_context
 
-__version_info__ = ('1', '0', '0')
+__version_info__ = ('2', '0', '0')
 __version__ = '.'.join(__version_info__)
 __author__ = 'Gergely Polonkai'
 __license__ = 'MIT'
 __copyright__ = '(c) 2015-2018 Benchmarked.games'
+
+
+def _import_by_string(fqn):
+    try:
+        mod_name, var_name = fqn.rsplit('.', 1)
+    except ValueError:
+        mod_name = fqn
+        var_name = None
+
+    mod = import_module(mod_name)
+
+    if var_name is None:
+        return mod
+
+    try:
+        var = getattr(mod, var_name)
+    except AttributeError:
+        raise ImportError('{var_name} not found in {mod_name}'.format(var_name=var_name, mod_name=mod_name))
+
+    return var
 
 
 class FlaskExtraLoggerFormatter(logging.Formatter):
@@ -55,7 +76,7 @@ class FlaskExtraLoggerFormatter(logging.Formatter):
        dictConfig({
            'formatters': {
                'extras': {
-                   'format': '[%(asctime)s] [%(levelname)s] [%(category)s] [%(blueprint)s] %(message)s',
+                   'format': '[%(asctime)s] [%(levelname)s] [%(category)s] [%(bp)s] %(message)s',
                },
            },
            'handlers': {
@@ -74,10 +95,17 @@ class FlaskExtraLoggerFormatter(logging.Formatter):
        })
 
        app = Flask(__name__)
-       app.config['FLASK_LOGGING_EXTRAS_KEYWORDS'] = {'category': '<unset>'}
-       app.config['FLASK_LOGGING_EXTRAS_BLUEPRINT'] = ('blueprint',
-                                                       '<APP>',
-                                                       '<NOT REQUEST>')
+       app.config['FLASK_LOGGING_EXTRAS'] = {
+           'BLUEPRINT': {
+               'FORMAT_NAME': 'bp',
+               'APP_BLUEPRINT': '<app>',
+               'NO_REQUEST_BLUEPRINT': '<not a request>',
+           },
+           'RESOLVERS': {
+               'categoy': '<unset>',
+               'client': 'log_helper.get_client',
+           },
+       }
 
        bp = Blueprint('my_blueprint', __name__)
        app.register_blueprint(bp)
@@ -85,13 +113,17 @@ class FlaskExtraLoggerFormatter(logging.Formatter):
        logger = logging.getLogger('my_app')
 
        # This will produce something like this in app.log:
-       # [2018-05-02 12:44:48.944] [INFO] [my category] [<NOT REQUEST>] The message
+       # [2018-05-02 12:44:48.944] [INFO] [my category] [<not request>] The message
        logger.info('The message', extra=dict(category='my category'))
+
+       # This will produce something like this in app.log:
+       # [2018-05-02 12:44:48.944] [INFO] [None] [<not request>] The message
+       logger.info('The message')
 
        @app.route('/1')
        def route_1():
            # This will produce a log message like this:
-           # [2018-05-02 12:44:48.944] [INFO] [<unset>] [<APP>] Message
+           # [2018-05-02 12:44:48.944] [INFO] [<unset>] [<app>] Message
            logger.info('Message')
 
            return ''
@@ -99,7 +131,7 @@ class FlaskExtraLoggerFormatter(logging.Formatter):
        @bp.route('/2')
        def route_2():
            # This will produce a log message like this:
-           # [2018-05-02 12:44:48.944] [INFO] [<unset>] [my_blueprint] Message
+           # [2018-05-02 12:44:48.944] [INFO] [None] [my_blueprint] Message
            logger.info('Message')
 
            return ''
@@ -109,33 +141,59 @@ class FlaskExtraLoggerFormatter(logging.Formatter):
        logger.info('Message')
     """
 
-    def _collect_keywords(self, record):
-        """Collect all valid keywords and add them to the log record if not present
+    def __init__(self, *args, **kwargs):
+        super(FlaskExtraLoggerFormatter, self).__init__(*args, **kwargs)
+
+        self.resolvers = {}
+        self.bp_var = None
+        self.bp_app = None
+        self.bp_noreq = None
+        self.__inited = False
+
+    def init_app(self, app):
+        """Initialise the formatter with app-specific values from ``app``’s configuration
         """
 
-        # We assume we do have an active app context here
-        defaults = current_app.config.get('FLASK_LOGGING_EXTRAS_KEYWORDS', {})
+        if self.__inited:
+            return
 
-        for keyword, default in defaults.items():
-            if keyword not in record.__dict__:
-                setattr(record, keyword, default)
+        config = app.config.get(
+            'FLASK_LOGGING_EXTRAS', {})
+
+        blueprint_config = config.get('BLUEPRINT', {})
+        self.bp_var = blueprint_config.get('FORMAT_NAME', 'blueprint')
+        self.bp_app = blueprint_config.get('APP_BLUEPRINT', '<app>')
+        self.bp_noreq = blueprint_config.get('NO_REQUEST_BLUEPRINT', '<not a request>')
+
+        for var_name, resolver_fqn in config.get('RESOLVERS', {}).items():
+            if resolver_fqn is None:
+                resolver = None
+            else:
+                try:
+                    resolver = _import_by_string(resolver_fqn)
+                except ImportError:
+                    resolver = resolver_fqn
+
+            self.resolvers[var_name] = resolver
+
+            self.__inited = True
 
     def format(self, record):
-        bp_var, bp_app, bp_noreq = ('blueprint', '<app>', '<not a request>')
         blueprint = None
 
         if has_app_context():
-            self._collect_keywords(record)
+            self.init_app(current_app)
 
-            bp_var, bp_app, bp_noreq = current_app.config.get('FLASK_LOGGING_EXTRAS_BLUEPRINT',
-                                                              (bp_var, bp_app, bp_noreq))
+            if self.bp_var and has_request_context():
+                blueprint = request.blueprint or self.bp_app
 
-            if bp_var and has_request_context():
-                blueprint = request.blueprint or bp_app
+        if self.bp_var and self.bp_var not in record.__dict__:
+            setattr(record, self.bp_var, blueprint or self.bp_noreq)
 
-        if bp_var and bp_var not in record.__dict__:
-            blueprint = blueprint or bp_noreq
+        for var_name, resolver in self.resolvers.items():
+            if var_name in record.__dict__:
+                continue
 
-            setattr(record, bp_var, blueprint)
+            setattr(record, var_name, resolver() if callable(resolver) else resolver)
 
         return super(FlaskExtraLoggerFormatter, self).format(record)
