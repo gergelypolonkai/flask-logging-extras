@@ -67,12 +67,16 @@ class LoggerKeywordsTestCase(TestCase):
     def setUp(self):
         self.logger, self.handler = configure_loggers('extra_keyword')
         self.app = Flask('test_app')
-        self.app.config['FLASK_LOGGING_EXTRAS_KEYWORDS'] = {
-            'extra_keyword': 'placeholder',
+        self.app.config['FLASK_LOGGING_EXTRAS'] = {
+            'BLUEPRINT': {
+                'FORMAT_NAME': None,
+                'APP_BLUEPRINT': '',
+                'NO_REQUEST_BLUEPRINT': '',
+            },
+            'RESOLVERS': {
+                'extra_keyword': 'placeholder',
+            },
         }
-
-        # Make sure we don’t try to log the current blueprint for this test case
-        self.app.config['FLASK_LOGGING_EXTRAS_BLUEPRINT'] = (None, '', '')
 
     def test_keywords_no_app_ctx(self):
         """With the current formatter, the last log line must be a just the message
@@ -90,9 +94,11 @@ class LoggerKeywordsTestCase(TestCase):
         """
 
         with self.app.app_context():
-            self.logger.info('message', extra=dict(extra_keyword='test'))
+            self.logger.info('message', extra=dict(extra_keyword='first'))
+            self.logger.info('message', extra=dict(extra_keyword='second'))
 
-        self.assertIn('message test', self.handler.logs)
+        self.assertIn('message first', self.handler.logs)
+        self.assertIn('message second', self.handler.logs)
 
     def test_keywords_app_ctx_no_value(self):
         """If we don’t provide a value for a registered extra keyword, the
@@ -104,6 +110,76 @@ class LoggerKeywordsTestCase(TestCase):
 
         self.assertIn('message placeholder', self.handler.logs)
 
+    def test_resolver_simple_importable(self):
+        """Test if the resolver is an importable module
+        """
+
+        self.app.config['FLASK_LOGGING_EXTRAS']['RESOLVERS'] = {
+            'extra_keyword': 'flask_logging_extras',
+        }
+
+        with self.app.app_context():
+            self.logger.info('message')
+
+        log = self.handler.logs[0]
+        self.assertTrue(log.startswith('message <module \'flask_logging_extras\' from '))
+
+    def test_resolver_imported_variable(self):
+        """Test resolver if it is an imported variable
+        """
+
+        self.app.config['FLASK_LOGGING_EXTRAS']['RESOLVERS'] = {
+            'extra_keyword': 'helpers.EXTRA_VAR',
+        }
+
+        with self.app.app_context():
+            self.logger.info('message')
+
+        log = self.handler.logs[0]
+        self.assertIn('message extra variable', self.handler.logs)
+
+    def test_resolver_imported_callable(self):
+        """Test resolver if it is an imported callable
+        """
+
+        self.app.config['FLASK_LOGGING_EXTRAS']['RESOLVERS'] = {
+            'extra_keyword': 'helpers.get_extra_keyword',
+        }
+
+        with self.app.app_context():
+            self.logger.info('message')
+
+        log = self.handler.logs[0]
+        self.assertIn('message extra callable', self.handler.logs)
+
+    def test_resolver_import_error(self):
+        """Test resolver if it cannot be imported
+        """
+
+        self.app.config['FLASK_LOGGING_EXTRAS']['RESOLVERS'] = {
+            'extra_keyword': 'helpers.invalid_import',
+        }
+
+        with self.app.app_context():
+            self.logger.info('message')
+
+        log = self.handler.logs[0]
+        self.assertIn('message helpers.invalid_import', self.handler.logs)
+
+    def test_resolver_none(self):
+        """Test resolver if its value is ``None``
+        """
+
+        self.app.config['FLASK_LOGGING_EXTRAS']['RESOLVERS'] = {
+            'extra_keyword': None,
+        }
+
+        with self.app.app_context():
+            self.logger.info('message')
+
+        log = self.handler.logs[0]
+        self.assertIn('message None', self.handler.logs)
+
 
 class LoggerBlueprintTestCase(TestCase):
     def setUp(self):
@@ -111,7 +187,13 @@ class LoggerBlueprintTestCase(TestCase):
 
         app = Flask('test_app')
         self.app = app
-        app.config['FLASK_LOGGING_EXTRAS_BLUEPRINT'] = ('bp', '<app>', '<norequest>')
+        app.config['FLASK_LOGGING_EXTRAS'] = {
+            'BLUEPRINT': {
+                'FORMAT_NAME': 'bp',
+                'APP_BLUEPRINT': '<app>',
+                'NO_REQUEST_BLUEPRINT': '<norequest>',
+            },
+        }
 
         configure_loggers('bp')
         self.logger = logging.getLogger('selftest')
